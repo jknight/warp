@@ -1,13 +1,13 @@
 // #![deny(warnings)]
-use std::collections::HashMap;
+use std::{collections::HashMap, usize};
+use std::io::{self, BufRead};
+
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-use std::{any::Any, thread};
-use termion::input::TermRead;
-use uuid::Uuid;
 
+use std::{thread};
 use futures::{FutureExt, StreamExt};
 use tokio::sync::{mpsc, RwLock};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -15,44 +15,52 @@ use warp::ws::{Message, WebSocket};
 use warp::Filter;
 
 /// Our global unique user id counter.
-//static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
-
-/// Our state of currently connected users.
-///
-/// - Key is their id
-/// - Value is a sender of `warp::ws::Message`
-//type Users = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Result<Message, warp::Error>>>>>;
-type Users = Arc<RwLock<HashMap<Uuid, mpsc::UnboundedSender<Result<Message, warp::Error>>>>>;
+static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
+type Users = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Result<Message, warp::Error>>>>>;
 
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
-    println!("Polling ...");
+    println!("
+    -----------------
+    Starting up a warp websocket on ws://127.0.0.1:8080/api ...
+    Once it's running, connect to the websocket to be issued an id.
+    (Weasel WebSocket Client brower plugin is a good option for testing connections)
+    Once you're connected with one or more sessions, enter the id of a user to simulate
+    sending them back an asynchronous message following a server side event.
+    -----------------
+    ");
 
-    println!("Starting up ...");
+
     // Keep track of all connected users, key is usize, value
     // is a websocket sender.
     let users = Users::default();
+
     // Turn our "state" into a new Filter...
     let thread_users = users.clone();
     let users = warp::any().map(move || users.clone());
 
+    // Listen for console input on a background thread
     thread::spawn(move || {
-        let mut stdin = termion::async_stdin().keys();
-        loop {
-            let input = stdin.next();
-            if let Some(Ok(_key)) = input {
-                match thread_users.try_read() {
-                    Ok(guard) => {
-                        //println!("--> {:?}", guard);
-                        //print_type_of(&guard);
-                        reply(&guard);
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            let input = line.unwrap();
+            let (a, b) = input.split_at(1);
+            let user_id = a.parse::<usize>().unwrap();
+            let message = b.parse::<String>().unwrap();
+            println!("You entered: {}", input);
+            match thread_users.try_read() {
+                    Ok(users) => {
+                        // Simulate an event here - reply to subscribers ...
+                        // in this mockup we take console input as the response to 
+                        // simulate a callback / reply on the websocket
+                        let message = format!("user_id: {} \n {}", user_id, message);
+                        reply(user_id, &message, &users);
                     }
                     Err(_) => {
-                        println!("Fail");
+                        println!("Failed to parse read users");
                     }
                 }
-            }
         }
     });
     // GET /api -> websocket upgrade
@@ -70,16 +78,12 @@ async fn main() {
     warp::serve(routes).run(([127, 0, 0, 1], 8080)).await;
 }
 
-fn print_type_of<T>(_: &T) {
-    println!("{}", std::any::type_name::<T>())
-}
-
 async fn user_connected(ws: WebSocket, users: Users) {
     // Use a counter to assign a new unique ID for this user.
-    //let my_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
-    let user_id = Uuid::new_v4(); //.simple();
+    let user_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
+    //let user_id = Uuid::new_v4().hyphenated().to_string();
 
-    eprintln!("new user connection: {}", user_id);
+    println!("new user connection: {}", user_id);
 
     // Split the socket into a sender and receive of messages.
     let (user_ws_tx, mut user_ws_rx) = ws.split();
@@ -107,11 +111,11 @@ async fn user_connected(ws: WebSocket, users: Users) {
         let msg = match result {
             Ok(msg) => msg,
             Err(e) => {
-                eprintln!("websocket error(uid={}): {}", user_id, e);
+                println!("websocket error(uid={}): {}", user_id, e);
                 break;
             }
         };
-        user_message(user_id, msg, &users).await;
+        user_message(&user_id, msg, &users).await;
     }
 
     // user_ws_rx stream will keep processing as long as the user stays
@@ -119,14 +123,24 @@ async fn user_connected(ws: WebSocket, users: Users) {
     user_disconnected(user_id, &users2).await;
 }
 
-fn reply(users: &HashMap<Uuid, mpsc::UnboundedSender<Result<Message, warp::Error>>>) {
+fn reply(user_id: usize, message: &str, users: &HashMap<usize, mpsc::UnboundedSender<Result<Message, warp::Error>>>) {
     for (&uid, tx) in users.iter() {
-        println!(">> Checking user {:?} ...", uid);
+        println!(">> Sending message back to user {:?} ...", uid);
+        if user_id == uid {
+            println!("  - Sending to user {:?} ...", uid);
+            //let message = format!("hello I am responding to you user {}", uid);
+            if let Err(_disconnected) = tx.send(Ok(Message::text(message))) {
+                // The tx is disconnected, our `user_disconnected` code
+                // should be happening in another task, nothing more to
+                // do here.
+            }
+            break;
+        }
+        
     }
 }
 
-//async fn user_message(my_id: usize, msg: Message, users: &Users) {
-async fn user_message(user_id: Uuid, msg: Message, users: &Users) {
+async fn user_message(user_id: &usize, msg: Message, users: &Users) {
     // Skip any non-Text messages...
     let msg = if let Ok(s) = msg.to_str() {
         s
@@ -134,13 +148,11 @@ async fn user_message(user_id: Uuid, msg: Message, users: &Users) {
         return;
     };
 
-    //let new_msg = format!("<User#{}>: {}", my_id, msg);
-    let new_msg = format!("<User#{}>: {}", user_id, msg);
+    let new_msg = format!("Connection successful. Your user id is: {} / your message was: {} ", user_id, msg);
 
-    // New message from this user, send it to everyone else (except same uid)...
-    for (&uid, tx) in users.read().await.iter() {
+    // Reply to the user by id
+    for (uid, tx) in users.read().await.iter() {
         println!("- Checking user {:?} ...", uid);
-        //if my_id == uid {
         if user_id == uid {
             println!("  - Sending to user {:?} ...", uid);
             if let Err(_disconnected) = tx.send(Ok(Message::text(new_msg.clone()))) {
@@ -148,14 +160,13 @@ async fn user_message(user_id: Uuid, msg: Message, users: &Users) {
                 // should be happening in another task, nothing more to
                 // do here.
             }
-            break;
+            break;  // we already set the target user a message - no need to keep checking
         }
     }
 }
 
-async fn user_disconnected(user_id: Uuid, users: &Users) {
+async fn user_disconnected(user_id: usize, users: &Users) {
     eprintln!("good bye user: {}", user_id);
-
     // Stream closed up, so remove from the user list
     users.write().await.remove(&user_id);
 }
