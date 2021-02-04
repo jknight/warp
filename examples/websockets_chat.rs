@@ -4,6 +4,11 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+
+use std::io::{stdin, stdout, Write};
+use termion::event::Key;
+use termion::raw::IntoRawMode;
+
 use std::{any::Any, thread};
 use termion::input::TermRead;
 use uuid::Uuid;
@@ -38,6 +43,46 @@ async fn main() {
     let users = warp::any().map(move || users.clone());
 
     thread::spawn(move || {
+        let stdin = stdin();
+        let mut stdout = stdout().into_raw_mode().unwrap();
+
+        write!(
+            stdout,
+            "{}{}q to exit. Type stuff, use alt, and so on.{}",
+            termion::clear::All,
+            termion::cursor::Goto(1, 1),
+            termion::cursor::Hide
+        )
+        .unwrap();
+        stdout.flush().unwrap();
+
+        for c in stdin.keys() {
+            write!(
+                stdout,
+                "{}{}",
+                termion::cursor::Goto(1, 1),
+                termion::clear::CurrentLine
+            )
+            .unwrap();
+
+            match c.unwrap() {
+                Key::Char('q') => break,
+                Key::Char(c) => println!("{}", c),
+                Key::Alt(c) => println!("^{}", c),
+                Key::Ctrl(c) => println!("*{}", c),
+                Key::Esc => println!("ESC"),
+                Key::Left => println!("←"),
+                Key::Right => println!("→"),
+                Key::Up => println!("↑"),
+                Key::Down => println!("↓"),
+                Key::Backspace => println!("×"),
+                _ => {}
+            }
+            stdout.flush().unwrap();
+        }
+
+        write!(stdout, "{}", termion::cursor::Show).unwrap();
+        /*
         let mut stdin = termion::async_stdin().keys();
         loop {
             let input = stdin.next();
@@ -54,6 +99,7 @@ async fn main() {
                 }
             }
         }
+        */
     });
     // GET /api -> websocket upgrade
     let api = warp::path("api")
@@ -122,6 +168,16 @@ async fn user_connected(ws: WebSocket, users: Users) {
 fn reply(users: &HashMap<Uuid, mpsc::UnboundedSender<Result<Message, warp::Error>>>) {
     for (&uid, tx) in users.iter() {
         println!(">> Checking user {:?} ...", uid);
+        /*if user_id == uid {
+            println!("  - Sending to user {:?} ...", uid);
+            if let Err(_disconnected) = tx.send(Ok(Message::text(new_msg.clone()))) {
+                // The tx is disconnected, our `user_disconnected` code
+                // should be happening in another task, nothing more to
+                // do here.
+            }
+            break;
+        }
+        */
     }
 }
 
