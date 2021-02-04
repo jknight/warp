@@ -26,8 +26,15 @@ async fn main() {
     Starting up a warp websocket on ws://127.0.0.1:8080/api ...
     Once it's running, connect to the websocket to be issued an id.
     (Weasel WebSocket Client brower plugin is a good option for testing connections)
-    Once you're connected with one or more sessions, enter the id of a user to simulate
-    sending them back an asynchronous message following a server side event.
+    Once you're connected with one or more sessions, simulate replying on an event by
+    entering a message into the console with their subscriber number followed by a message:
+
+    1 Here is a message for subscriber #1
+    
+    or:
+
+    2 Here is a message for subscriber number 2 hello 
+
     -----------------
     ");
 
