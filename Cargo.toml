@@ -20,6 +20,8 @@ all-features = true
 async-compression = { version = "0.3.7", features = ["brotli", "deflate", "gzip", "tokio"], optional = true }
 bytes = "1.0"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
+uuid = { version = "0.4", features = ["serde", "v4"] }
+termion = "1.5.2"
 headers = "0.3"
 http = "0.2"
 hyper = { version = "0.14", features = ["stream", "server", "http1", "http2", "tcp", "client"] }
@@ -88,6 +90,10 @@ required-features = ["websocket"]
 
 [[example]]
 name = "websockets_chat"
+required-features = ["websocket"]
+
+[[example]]
+name = "websockets_poc"
 required-features = ["websocket"]
 
 [[example]]
